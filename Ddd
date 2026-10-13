@@ -1,0 +1,130 @@
+import traceback
+import asyncio as aio
+import aiohttp
+import string
+import sys
+from loguru import logger
+
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+
+# Настройки
+TOKEN = "8958014562:AAH4p4nUTUhHBxvsBfGB_YIQ6Gifb2E17RQ"
+
+bot = Bot(token=TOKEN, 
+    default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
+dp = Dispatcher(storage=MemoryStorage())
+
+logger.remove()
+logger.add(sys.stderr, level="INFO")
+
+ignore_list = [
+    'https://t.me/SLlV_INTIM_BOT', 
+    'https://t.me/+YztOEovieQIzZjY8', 
+    'free vpn infinite time', 
+    'mdisk', 
+    'free exploits', 
+    'http://openroadmdnzgrna5lzkkjlqvc662o4xbgsjqi22qjek6adq4j6emaad.onion/'
+]
+
+async def thread_find_current_query_url(session: aiohttp.ClientSession, query_url, save, sleep=0.1):
+    logger.debug(f"CHECK {query_url}")
+    await aio.sleep(sleep)
+    try:
+        async with session.get(query_url) as response:
+            if response.status == 404:
+                save.append(0)
+                return
+            else:
+                resp = await response.text()
+                for word in ignore_list:
+                    if word in resp:
+                        save.append(0)
+                        return
+                save.append(query_url)
+    except Exception:
+        save.append(0)
+
+async def create_threads_day(session, month, day, query, save_return_to):
+    async with aio.TaskGroup() as tg:
+        for index in range(0, 50):
+            if index + 1 > 1:
+                url = f'https://telegra.ph/{query}-{month}-{day}-{index + 1}'
+                tg.create_task(thread_find_current_query_url(session, url, save_return_to, index / 10))
+            else:
+                url = f'https://telegra.ph/{query}-{month}-{day}'
+                tg.create_task(thread_find_current_query_url(session, url, save_return_to))
+
+async def create_threads_month(month_idx, query, save_return_to):
+    async with aiohttp.ClientSession() as session:
+        async with aio.TaskGroup() as tg2:
+            month = f'{month_idx + 1:02}'
+            for day_idx in range(0, 30):
+                day = f"{day_idx + 1:02}"
+                tg2.create_task(create_threads_day(session, month, day, query, save_return_to))
+
+async def find_query(query, answer_to, message_id):
+    returns = []
+    for month in range(0, 12):
+        try:
+            await bot.edit_message_text(f"В процессе: {month + 1}/12", answer_to, message_id)
+        except Exception: pass
+        await create_threads_month(month, query, returns)
+    
+    try:
+        await bot.edit_message_text(f"Просматриваю ссылки и подготавливаю их...", answer_to, message_id)
+    except Exception: pass
+
+    returns = [ret for ret in returns if ret]
+    msgs = [returns[i:i + 50] for i in range(0, len(returns), 50)]
+    
+    logger.info(f'Спарсил {len(returns)} ссылок')
+    
+    for msg in msgs:
+        try:
+            await bot.send_message(answer_to, '\n'.join(msg))
+        except Exception:
+            logger.error(traceback.format_exc())
+            
+    await bot.send_message(answer_to, f"Найдено {len(returns)} ссылок")
+
+@dp.message(Command("p"))
+async def start(message: types.Message):
+    logger.info("Начинаю парсить...")
+    msg = await message.answer("запускаю...")
+    
+    query = message.text.replace("/p ", '').strip()
+    if not query or query == "/p":
+        await message.answer("Введите запрос после команды /p")
+        return
+
+    translate_dict = {
+        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ж': 'zh',
+        'з': 'z', 'и': 'i', 'й': 'j', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
+        'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f',
+        'х': 'h', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'shch', 'ъ': '',
+        'ы': 'y', 'ь': '', 'э': 'eh', 'ю': 'yu', 'я': 'ya', ' ': '-', 'ё': 'yo'
+    }
+
+    query = query.lower()
+    for k, v in translate_dict.items():
+        query = query.replace(k, v)
+        for char in string.punctuation.replace('-', ''):
+                    query = query.replace(char, '')
+
+    # Запускаем поиск фоном
+    aio.create_task(find_query(query, message.from_user.id, msg.message_id))
+
+async def main():
+    logger.info("Бот запущен!")
+    await dp.start_polling(bot)
+
+if __name__ == '__main__':
+    try:
+        aio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Бот выключен")
+        
